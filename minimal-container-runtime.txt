@@ -1,0 +1,210 @@
+Minimal Container Runtime (mdocker)
+
+
+1. Introduction
+
+Containerization is often misunderstood as a form of lightweight virtualization. In reality, containers rely on kernel-level isolation mechanisms rather than hardware emulation. Understanding these mechanisms is critical for systems engineers, platform engineers, and anyone working close to the operating system.
+
+The motivation behind this project is threefold:
+
+To develop a ground-up understanding of how container runtimes work internally
+
+To gain hands-on experience with Linux namespaces, cgroups, and filesystem isolation
+
+To design and implement a clean, minimal, and inspectable container runtime
+
+This project intentionally avoids large frameworks and external dependencies, focusing instead on direct interaction with Linux system calls.
+
+2. Problem Statement
+
+Design and implement a minimal container runtime capable of:
+
+Executing a user-specified command inside an isolated environment
+
+Providing PID, UTS, and mount namespace isolation
+
+Restricting process creation using cgroups v2
+
+Running on a minimal root filesystem
+
+Demonstrating the re-exec / PID 1 model used by real container runtimes
+
+The runtime must be simple, readable, and faithful to actual container internals.
+
+3. System Overview
+
+At a high level, mdocker follows the same conceptual flow as Docker:
+
+A parent process prepares the execution environment
+
+Linux namespaces are created using unshare()
+
+A child process becomes PID 1 inside the container
+
+A minimal root filesystem is mounted using chroot()
+
+Resource limits are applied using cgroups v2
+
+The target command is executed inside the isolated environment
+
+Despite being implemented in Python, the runtime interacts directly with the Linux kernel via system calls, ensuring correctness and realism.
+
+4. Core Linux Concepts Used
+4.1 Linux Namespaces
+
+The runtime uses the following namespaces:
+
+PID Namespace (CLONE_NEWPID)
+Ensures that processes inside the container have their own PID tree, with the container’s init process appearing as PID 1.
+
+UTS Namespace (CLONE_NEWUTS)
+Allows the container to have its own hostname, independent of the host system.
+
+Mount Namespace (CLONE_NEWNS)
+Prevents mount and unmount operations inside the container from affecting the host.
+
+These namespaces are created using the unshare() system call.
+
+4.2 cgroups v2 (Process Limiting)
+
+The project applies a PID limit using cgroups v2. Each container is assigned its own cgroup directory, and a maximum process limit is enforced using:
+
+pids.max = 50
+
+
+This ensures that a fork bomb or runaway process inside the container cannot destabilize the host system.
+
+4.3 Filesystem Isolation
+
+Filesystem isolation is achieved using:
+
+chroot() to change the root directory
+
+A minimal root filesystem (BusyBox / Alpine-style)
+
+Mounting /proc inside the container for process visibility
+
+This creates the illusion of a complete Linux environment while relying entirely on the host kernel.
+
+5. Detailed Code Architecture
+5.1 Entry Point and CLI
+
+The program is invoked using:
+
+sudo ./mdocker run <rootfs_path> <command>
+
+
+The CLI validates input, resolves absolute paths, and forks the initial process.
+
+5.2 Parent Process Responsibilities
+
+The parent process:
+
+Creates a dedicated cgroup directory
+
+Enables the pids controller (if not already enabled)
+
+Assigns the container process to the cgroup
+
+Waits for container termination and handles cleanup
+
+This separation mirrors real-world container runtimes, where orchestration logic runs outside the container.
+
+5.3 Namespace Setup and Re-exec Model
+
+The container setup phase performs:
+
+unshare() to create new namespaces
+
+fork() so that the child becomes PID 1 in the new PID namespace
+
+This design reflects Docker’s init process model and ensures correct signal handling semantics.
+
+5.4 Container Init (PID 1)
+
+The child process performs the following critical steps:
+
+Remounts / as private to prevent mount propagation
+
+Sets a container-specific hostname (mdocker)
+
+Enters the new root filesystem using chroot()
+
+Mounts /proc inside the container
+
+Replaces itself using execvp() with the target command
+
+Once execvp() succeeds, the container behaves like a real isolated Linux system.
+
+6. Key Design Decisions
+
+Python over C
+Python was chosen to improve readability and learning value while still enabling low-level system interaction via ctypes.
+
+Minimal Scope
+Networking, image layering, and storage drivers were intentionally excluded to maintain conceptual clarity.
+
+Truthful Semantics
+No simulation or shortcuts were used; all isolation is enforced by the Linux kernel.
+
+7. Limitations
+
+While functional, mdocker has intentional limitations:
+
+No network namespace isolation
+
+No CPU or memory cgroup limits (PID-only)
+
+Requires root privileges
+
+Uses chroot() instead of pivot_root()
+
+No container image format or layering
+
+8. Results and Observations
+
+Commands executed inside mdocker are fully isolated from the host’s PID and hostname
+
+Process limits are correctly enforced
+
+/proc reflects container-local process information
+
+The container lifecycle cleanly terminates without leaking resources
+
+The runtime behaves consistently with expectations from a minimal container engine.
+
+9. Learning Outcomes
+
+Through this project, I gained:
+
+A deep understanding of Linux process isolation
+
+Practical experience with namespaces and cgroups v2
+
+Insight into how Docker and OCI runtimes are structured internally
+
+Confidence in working close to the Linux kernel and system calls
+
+Most importantly, the project reinforced that containers are not magic—they are disciplined applications of existing kernel features.
+
+10. Future Enhancements
+
+Potential extensions include:
+
+Network namespace and veth pair setup
+
+CPU and memory cgroup enforcement
+
+pivot_root() implementation
+
+Signal forwarding and init reaping logic
+
+Basic image layering support
+
+These enhancements would move the project closer to an OCI-compliant runtime.
+
+11. Conclusion
+
+mdocker successfully demonstrates the core principles behind containerization using a clean, minimal, and technically faithful implementation. By avoiding abstraction-heavy frameworks, the project provides a transparent view into how containers actually work under the hood.
+
+This project aligns strongly with systems programming, operating systems, and platform engineering domains, and reflects a deliberate effort to understand—not merely use—modern infrastructure technologies.
